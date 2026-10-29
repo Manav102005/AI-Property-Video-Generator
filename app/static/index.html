@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Property Video Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=2.3">
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="wordmark">
+        <span class="wordmark-title">Property Video Generator</span>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-load-sample">
+          Load sample data
+        </button>
+        <button type="button" class="btn-theme-toggle" id="btn-theme-toggle" title="Toggle theme">
+          Dark Mode
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Form Section: Two Column Split Dashboard -->
+      <form id="generator-form" class="dashboard-grid" novalidate>
+        
+        <!-- Left Column: Details Card -->
+        <section class="card" id="card-details">
+          <div class="card-header">
+            <h2 class="card-title">
+              <span class="step-num">1</span> Property Details
+            </h2>
+          </div>
+
+          <div class="form-grid">
+            <div class="form-group col-full">
+              <label for="property_name">
+                <span>Property name *</span>
+                <span class="hint">2–80 chars</span>
+              </label>
+              <input type="text" id="property_name" name="property_name" placeholder="e.g. Azure Crest Residences" required maxlength="80">
+              <div class="field-error" id="err-property_name"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="location">
+                <span>Location *</span>
+                <span class="hint">2–120 chars</span>
+              </label>
+              <input type="text" id="location" name="location" placeholder="e.g. Palm Beach Road, Navi Mumbai" required maxlength="120">
+              <div class="field-error" id="err-location"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="price">
+                <span>Price *</span>
+                <span class="hint">e.g. ₹1.85 Cr or $450K</span>
+              </label>
+              <input type="text" id="price" name="price" placeholder="e.g. ₹1.85 Crore" required maxlength="60">
+              <div class="field-error" id="err-price"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="property_type">
+                <span>Property type *</span>
+              </label>
+              <select id="property_type" name="property_type" required>
+                <option value="">Select type...</option>
+                <option value="Apartment">Apartment</option>
+                <option value="Villa">Villa</option>
+                <option value="House">House</option>
+                <option value="Plot">Plot</option>
+                <option value="Commercial">Commercial</option>
+                <option value="Other">Other</option>
+              </select>
+              <div class="field-error" id="err-property_type"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="bedrooms">
+                <span>Bedrooms</span>
+                <span class="hint">Optional (e.g. 3 BHK)</span>
+              </label>
+              <input type="text" id="bedrooms" name="bedrooms" placeholder="e.g. 3 BHK">
+              <div class="field-error" id="err-bedrooms"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="area">
+                <span>Area / Size</span>
+                <span class="hint">Optional (e.g. 1,420 sq ft)</span>
+              </label>
+              <input type="text" id="area" name="area" placeholder="e.g. 1,420 sq ft">
+              <div class="field-error" id="err-area"></div>
+            </div>
+
+            <div class="form-group">
+              <label for="contact_cta">
+                <span>Contact / CTA *</span>
+                <span class="hint">e.g. Call / Visit</span>
+              </label>
+              <input type="text" id="contact_cta" name="contact_cta" placeholder="Call +91 98200 12345 or visit azurecrest.in" required maxlength="150">
+              <div class="field-error" id="err-contact_cta"></div>
+            </div>
+
+            <div class="form-group col-full">
+              <label for="key_features">
+                <span>Key features *</span>
+                <span class="hint">3–8 items, one per line</span>
+              </label>
+              <textarea id="key_features" name="key_features" placeholder="Panoramic Creek View&#10;Italian Marble Flooring&#10;Infinity Rooftop Pool&#10;Private Clubhouse & Gym" required></textarea>
+              <div class="field-error" id="err-key_features"></div>
+            </div>
+
+            <!-- Redesigned Unified Settings Strip -->
+            <div class="col-full settings-bar">
+              <!-- Voice-over Setting -->
+              <div class="setting-group voice-group">
+                <div class="setting-meta">
+                  <label for="voiceover_enabled" class="setting-title-inline">Voice-over Narration</label>
+                  <span class="setting-sub-inline">Neural AI speech per scene</span>
+                </div>
+                <label class="switch-control" for="voiceover_enabled" title="Toggle voice narration">
+                  <input type="checkbox" id="voiceover_enabled" name="voiceover_enabled" checked>
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <!-- Script Mode Segmented Switch -->
+              <div class="setting-group mode-group">
+                <div class="setting-meta">
+                  <span class="setting-title-inline">Script Mode</span>
+                  <span class="setting-sub-inline">Template or AI-written</span>
+                </div>
+                <div class="segmented-control" id="script-mode-control">
+                  <button type="button" class="segment-btn active" data-value="template">Template</button>
+                  <button type="button" class="segment-btn" data-value="ai">✦ AI Mode</button>
+                  <input type="hidden" id="script_mode" name="script_mode" value="template">
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right Column: Photos & Submit Card -->
+        <section class="card photos-card" id="card-images">
+          <div class="card-header">
+            <h2 class="card-title">
+              <span class="step-num">2</span> Property Photos
+            </h2>
+            <span class="badge-count" id="photo-counter">0 of 4–8 photos</span>
+          </div>
+
+          <!-- Sleek Dropzone -->
+          <div class="dropzone" id="image-dropzone">
+            <div class="dropzone-icon-badge">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+            </div>
+            <div class="dropzone-info">
+              <div class="dropzone-text"><strong>Click to upload</strong> or drag & drop photos</div>
+              <div class="dropzone-subtext">JPG, PNG, WebP (up to 8 MB each • 4 to 8 photos required)</div>
+            </div>
+            <input type="file" id="file-input" multiple accept="image/jpeg,image/png,image/webp" style="display: none;">
+          </div>
+          <div class="field-error" id="err-images"></div>
+
+          <!-- Thumbnail Gallery -->
+          <div class="gallery-wrapper">
+            <div class="thumbnail-grid" id="thumbnail-grid"></div>
+            <div class="empty-gallery-hint" id="empty-gallery-hint">
+              <span>Uploaded photos will appear here with drag-to-reorder support</span>
+            </div>
+          </div>
+
+          <!-- Primary Submit Action -->
+          <div class="action-footer">
+            <button type="submit" class="btn btn-primary btn-full btn-generate" id="btn-submit">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span>Generate Promotional Video</span>
+            </button>
+          </div>
+        </section>
+      </form>
+
+      <!-- Progress Card (Hidden initially) -->
+      <section class="card progress-card" id="card-progress">
+        <div class="progress-header">
+          <h2 class="card-title">Rendering Video</h2>
+          <span class="stage-badge" id="progress-stage">QUEUED</span>
+        </div>
+
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+
+        <div class="progress-message" id="progress-message">Preparing assets and initialising pipeline...</div>
+      </section>
+
+      <!-- Result Card (Hidden initially) -->
+      <section class="card result-card" id="card-result">
+        <div class="card-header">
+          <h2 class="card-title">Your Video is Ready</h2>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-start-new">
+            Generate Another
+          </button>
+        </div>
+
+        <div class="notices-box" id="result-notices"></div>
+
+        <div class="result-layout">
+          <div class="video-container">
+            <video id="video-player" controls preload="metadata"></video>
+          </div>
+
+          <div class="result-sidebar">
+            <div class="result-actions">
+              <a id="btn-download" href="#" download="property_video.mp4" class="btn btn-primary btn-full">
+                Download MP4
+              </a>
+            </div>
+
+            <div class="script-box-container">
+              <label class="script-label">Generated Scene Plan & Captions</label>
+              <pre class="script-preview" id="script-preview"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="/static/app.js?v=2.3"></script>
+</body>
+</html>

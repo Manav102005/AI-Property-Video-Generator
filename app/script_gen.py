@@ -1,0 +1,389 @@
+"""Script and caption generation logic (Template + AI mode with strict Fact-Check)."""
+
+import json
+import logging
+import os
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from app.schemas import PropertyInput, Scene, ScriptOutput
+
+logger = logging.getLogger("property_video_gen.script_gen")
+
+
+def wrap_caption(text: str, max_words_per_line: int = 8) -> str:
+    """
+    Ensure each line of caption contains at most `max_words_per_line` words.
+    Preserves existing newlines where appropriate.
+    """
+    if not text:
+        return ""
+    paragraphs = text.strip().splitlines()
+    output_lines = []
+    for para in paragraphs:
+        words = para.strip().split()
+        if not words:
+            continue
+        for i in range(0, len(words), max_words_per_line):
+            output_lines.append(" ".join(words[i : i + max_words_per_line]))
+    return "\n".join(output_lines)
+
+
+def truncate_voiceover(text: Optional[str], max_words: int = 25) -> Optional[str]:
+    """Ensure voiceover narration is at most `max_words` words per scene."""
+    if not text:
+        return None
+    words = text.strip().split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words])
+
+
+def generate_template_script(prop: PropertyInput, num_images: int) -> ScriptOutput:
+    """
+    Generates deterministic promotional script scenes based on supplied inputs:
+    - 1 title scene
+    - 1 to 5 feature scenes
+    - 1 details scene (price/type/bedrooms/area)
+    - 1 CTA scene
+    Total scenes strictly equals num_images (4 to 8).
+    """
+    clamped_images = max(4, min(8, num_images))
+    scenes: List[Scene] = []
+
+    # Scene 0: Title Scene
+    title_caption = wrap_caption(f"{prop.property_name}\n{prop.location}", max_words_per_line=8)
+    title_vo = truncate_voiceover(
+        f"Welcome to {prop.property_name}, premier living situated in {prop.location}.",
+        max_words=25,
+    )
+    scenes.append(Scene(type="title", image_index=0, caption=title_caption, voiceover=title_vo))
+
+    # Feature Scenes: total available slots for features is clamped_images - 3 (for title, details, cta)
+    feature_count = clamped_images - 3
+    features_to_use = prop.key_features[:feature_count]
+    # If more slots than features, repeat or fill
+    while len(features_to_use) < feature_count and prop.key_features:
+        features_to_use.append(prop.key_features[len(features_to_use) % len(prop.key_features)])
+
+    current_img_idx = 1
+    for feat in features_to_use:
+        feat_caption = wrap_caption(feat, max_words_per_line=8)
+        feat_vo = truncate_voiceover(
+            f"Featuring {feat.lower()}, designed for refined and comfortable living.",
+            max_words=25,
+        )
+        scenes.append(
+            Scene(
+                type="feature",
+                image_index=current_img_idx,
+                caption=feat_caption,
+                voiceover=feat_vo,
+            )
+        )
+        current_img_idx += 1
+
+    # Details Scene: (price, type, bedrooms, area) - omit any missing optional field
+    details_lines = [f"{prop.property_type.value} • {prop.price}"]
+    spec_parts = []
+    if prop.bedrooms:
+        spec_parts.append(prop.bedrooms)
+    if prop.area:
+        spec_parts.append(prop.area)
+    if spec_parts:
+        details_lines.append(" • ".join(spec_parts))
+
+    details_caption = wrap_caption("\n".join(details_lines), max_words_per_line=8)
+
+    vo_parts = [f"This {prop.property_type.value.lower()}"]
+    if prop.bedrooms:
+        vo_parts.append(f"featuring {prop.bedrooms}")
+    if prop.area:
+        vo_parts.append(f"across {prop.area}")
+    vo_parts.append(f"is available now for {prop.price}.")
+    details_vo = truncate_voiceover(" ".join(vo_parts), max_words=25)
+
+    scenes.append(
+        Scene(
+            type="details",
+            image_index=current_img_idx,
+            caption=details_caption,
+            voiceover=details_vo,
+        )
+    )
+    current_img_idx += 1
+
+    # CTA Scene: contact information
+    cta_caption = wrap_caption(prop.contact_cta, max_words_per_line=8)
+    cta_vo = truncate_voiceover(
+        f"Contact today to schedule a private viewing. {prop.contact_cta}",
+        max_words=25,
+    )
+    scenes.append(
+        Scene(
+            type="cta",
+            image_index=current_img_idx,
+            caption=cta_caption,
+            voiceover=cta_vo,
+        )
+    )
+
+    return ScriptOutput(scenes=scenes, used_template_fallback=False)
+
+
+def extract_numbers_and_entities(text: str) -> Tuple[Set[str], Set[str]]:
+    """
+    Extracts numerical tokens and capitalized entities from text for fact-checking.
+    """
+    # Extract numbers (integers, decimals, prices, BHK numbers, sq ft values)
+    raw_numbers = re.findall(r"\b\d+(?:[.,]\d+)?\b", text)
+    numbers = {n.replace(",", "") for n in raw_numbers}
+
+    # Extract capitalized proper words (ignore common sentence starters and real estate types)
+    common_words = {
+        "The", "This", "A", "An", "In", "On", "At", "For", "With", "And", "Or",
+        "Welcome", "Featuring", "Call", "Visit", "Contact", "Exclusive", "Now",
+        "Available", "Offering", "Experience", "Designed", "Your", "Today",
+        "Premier", "Luxury", "Modern", "Spacious", "Prime", "Exceptional",
+        "Relax", "Enjoy", "Discover", "Priced", "Offered", "Located", "Listed",
+        "Apartment", "Apartments", "Home", "Homes", "Residence", "Residences",
+        "Villa", "Villas", "Property", "Properties", "Condo", "Condos",
+        "Price", "Prices", "Bedrooms", "Bedroom", "Beds", "Bed", "Area", "Location",
+        "Features", "Feature", "Size", "View", "Views", "Living", "Private",
+        "Details", "Information", "Schedule", "Tour", "Viewing", "Inquire",
+    }
+    raw_proper = re.findall(r"\b[A-Z][a-zA-Z0-9'-]+\b", text)
+    proper_nouns = {w for w in raw_proper if w not in common_words and len(w) > 2}
+
+    return numbers, proper_nouns
+
+
+def fact_check_script(prop: PropertyInput, script: ScriptOutput) -> Tuple[bool, Optional[str]]:
+    """
+    Strict fact-check:
+    Every number, price, and proper noun in the generated script must appear in the input.
+    No invented amenities, metro distances, ROI, or claims.
+    """
+    # Compile entire input into a normalized corpus
+    input_text = " ".join([
+        prop.property_name,
+        prop.location,
+        prop.price,
+        prop.property_type.value,
+        prop.bedrooms or "",
+        prop.area or "",
+        " ".join(prop.key_features),
+        prop.contact_cta,
+    ])
+
+    input_numbers, input_proper = extract_numbers_and_entities(input_text)
+    input_lower = input_text.lower()
+
+    # Hallucination watchwords that must never appear unless in input
+    prohibited_claims = ["metro", "station", "roi", "yield", "highway", "airport", "mall", "hospital", "school"]
+
+    for scene in script.scenes:
+        scene_text = f"{scene.caption} {scene.voiceover or ''}"
+        scene_numbers, scene_proper = extract_numbers_and_entities(scene_text)
+
+        # 1. Check prohibited hallucination watchwords / claims first
+        for claim in prohibited_claims:
+            if claim in scene_text.lower() and claim not in input_lower:
+                return False, f"Invented claim '{claim}' detected in scene {scene.type}"
+
+        # 2. Check numbers
+        for num in scene_numbers:
+            if num not in input_numbers:
+                return False, f"Invented number '{num}' detected in scene {scene.type}"
+
+        # 3. Check proper nouns (handle singular/plural stems)
+        for proper in scene_proper:
+            p_clean = proper.lower()
+            p_singular = p_clean.rstrip("s")
+            if p_clean not in input_lower and p_singular not in input_lower:
+                return False, f"Invented entity or proper noun '{proper}' in scene {scene.type}"
+
+    return True, None
+
+
+def _parse_and_align_scenes(scenes_data: List[dict], num_images: int) -> List[Scene]:
+    """Parse raw scene dictionaries, adapt to exactly num_images, and validate."""
+    if not scenes_data:
+        raise ValueError("AI returned empty scenes list")
+
+    # If the LLM returned extra scenes (e.g. 5 instead of 4), gracefully adapt
+    if len(scenes_data) > num_images:
+        title_scenes = [s for s in scenes_data if s.get("type") == "title"]
+        cta_scenes = [s for s in scenes_data if s.get("type") == "cta"]
+        details_scenes = [s for s in scenes_data if s.get("type") == "details"]
+        feature_scenes = [s for s in scenes_data if s.get("type") not in ("title", "cta", "details")]
+
+        title = title_scenes[0] if title_scenes else scenes_data[0]
+        cta = cta_scenes[-1] if cta_scenes else scenes_data[-1]
+        details = (
+            details_scenes[0]
+            if details_scenes
+            else (scenes_data[-2] if len(scenes_data) > 2 else scenes_data[0])
+        )
+
+        needed_features = max(0, num_images - 3)
+        selected_features = feature_scenes[:needed_features]
+
+        aligned = [title] + selected_features + [details] + [cta]
+        scenes_data = aligned[:num_images]
+
+    elif len(scenes_data) < num_images:
+        raise ValueError(f"AI returned {len(scenes_data)} scenes, expected {num_images}")
+
+    ai_scenes = []
+    for idx, item in enumerate(scenes_data):
+        ai_scenes.append(
+            Scene(
+                type=item.get("type", "feature" if idx > 0 else "title"),
+                image_index=idx,
+                caption=wrap_caption(item.get("caption", "")),
+                voiceover=truncate_voiceover(item.get("voiceover")),
+            )
+        )
+    return ai_scenes
+
+
+def _generate_via_openai(prompt: str, api_key: str, num_images: int) -> List[Scene]:
+    """Call OpenAI Chat Completions API with structured JSON output."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a strict, factual real estate video script assistant. Output JSON only.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
+
+    raw_text = (response.choices[0].message.content or "").strip()
+    parsed = json.loads(raw_text)
+    scenes_data = parsed.get("scenes", [])
+    return _parse_and_align_scenes(scenes_data, num_images)
+
+
+def _generate_via_anthropic(prompt: str, api_key: str, num_images: int) -> List[Scene]:
+    """Call Anthropic Messages API."""
+    from anthropic import Anthropic
+
+    client = Anthropic(api_key=api_key)
+    model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=1000,
+        temperature=0.2,
+        system="You are a strict, factual real estate video script assistant. Output JSON only.",
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw_text = response.content[0].text.strip()
+    if "```" in raw_text:
+        raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.MULTILINE).strip()
+
+    parsed = json.loads(raw_text)
+    scenes_data = parsed.get("scenes", [])
+    return _parse_and_align_scenes(scenes_data, num_images)
+
+
+def generate_script(
+    prop: PropertyInput,
+    num_images: int,
+    api_key: Optional[str] = None,
+) -> Tuple[ScriptOutput, Optional[str]]:
+    """
+    Main entry point for script generation.
+    Generates via OpenAI API (or Anthropic API) if script_mode == 'ai'.
+    Strictly validates and fact-checks; falls back to template on any failure.
+    """
+    warning = None
+
+    if prop.script_mode.value == "ai":
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+        # Handle explicit api_key param
+        if api_key is not None:
+            if not api_key.strip():
+                # Caller explicitly supplied empty key to force fallback
+                openai_key = ""
+                anthropic_key = ""
+            elif api_key.startswith("sk-ant-"):
+                anthropic_key = api_key
+            else:
+                openai_key = api_key
+
+        if not openai_key and not anthropic_key:
+            warning = "Template fallback used: OPENAI_API_KEY is not configured."
+            template_script = generate_template_script(prop, num_images)
+            template_script.used_template_fallback = True
+            return template_script, warning
+
+        num_features = max(1, num_images - 3)
+        prompt = (
+            f"You are a real estate video script generator. Using ONLY the facts provided below, "
+            f"generate an MP4 promotional video script consisting of EXACTLY {num_images} scenes.\n"
+            f"SCENE BREAKDOWN (TOTAL EXACTLY {num_images} SCENES):\n"
+            f"1. Scene 1 (image_index: 0): type 'title'\n"
+            f"2. Next {num_features} scene(s): exactly {num_features} 'feature' scene(s) choosing the most prominent features\n"
+            f"3. Scene {2 + num_features}: type 'details'\n"
+            f"4. Scene {num_images} (image_index: {num_images - 1}): type 'cta'\n\n"
+            f"RULES:\n"
+            f"1. DO NOT invent or assume ANY facts, amenities, distances, ROI, landmarks, or near metro claims.\n"
+            f"2. Every number, price, bedroom count, and proper name must come strictly from the inputs.\n"
+            f"3. Captions must be at most 8 words per line.\n"
+            f"4. Voiceover must be at most 25 words per scene.\n"
+            f"5. Respond ONLY with valid JSON in this schema:\n"
+            f'{{"scenes": [{{"type": "title|feature|details|cta", "image_index": 0, "caption": "...", "voiceover": "..."}}]}}\n\n'
+            f"INPUTS:\n"
+            f"Property Name: {prop.property_name}\n"
+            f"Location: {prop.location}\n"
+            f"Price: {prop.price}\n"
+            f"Type: {prop.property_type.value}\n"
+            f"Bedrooms: {prop.bedrooms or 'Not specified'}\n"
+            f"Area: {prop.area or 'Not specified'}\n"
+            f"Key Features:\n" + "\n".join(f"- {f}" for f in prop.key_features) + "\n"
+            f"Contact / CTA: {prop.contact_cta}\n"
+        )
+
+        try:
+            if openai_key:
+                ai_scenes = _generate_via_openai(prompt, openai_key, num_images)
+            else:
+                ai_scenes = _generate_via_anthropic(prompt, anthropic_key, num_images)
+
+            ai_script = ScriptOutput(scenes=ai_scenes, used_template_fallback=False)
+
+            # Run Fact Check
+            is_valid, fail_reason = fact_check_script(prop, ai_script)
+            if not is_valid:
+                logger.warning(f"AI script failed fact check: {fail_reason}. Falling back to template.")
+                warning = f"Template fallback used: {fail_reason}"
+                fallback_script = generate_template_script(prop, num_images)
+                fallback_script.used_template_fallback = True
+                return fallback_script, warning
+
+            return ai_script, None
+
+        except Exception as e:
+            logger.warning(f"AI generation failed ({e}). Falling back to template.")
+            warning = f"Template fallback used: {str(e)}"
+            fallback_script = generate_template_script(prop, num_images)
+            fallback_script.used_template_fallback = True
+            return fallback_script, warning
+
+    # Default: Template mode
+    template_script = generate_template_script(prop, num_images)
+    return template_script, None
